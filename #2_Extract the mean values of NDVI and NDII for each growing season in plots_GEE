@@ -27,7 +27,7 @@ var addIndex = function(img) {
 //Calculate the average NDVI/NDII value for each point during the growing season
 var results = pts.map(function(p) {
 
-  var year = 2017;  //2018，2019，2020，2021
+  var year = 2017;  //2018，2019，2020，2021，2022
   var sos = ee.Number(p.get('SOS17')); //SOS+YEAR
   var eos = ee.Number(p.get('EOS17')); //EOS+YEAR
 
