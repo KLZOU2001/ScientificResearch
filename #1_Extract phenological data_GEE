@@ -14,7 +14,7 @@ print(pheCollection)
 function exportImage(image, roi, fileName) {  
     Export.image.toDrive({  
        image: image,  
-       description: fileName+'_Greenup_1',  
+       description: fileName+'_Greenup_1',  //name the file
        scale: 500,  //resolution
        region: roi,  //study area
        maxPixels: 1e13,  //Max like element, default is fine
