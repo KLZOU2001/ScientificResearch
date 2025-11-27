@@ -1,0 +1,32 @@
+//Extract phenological data for the sample plot from 2017 to 2024
+
+var roi: Table (#shp file path)
+
+var startDate = ee.Date('1970-01-01');
+var pheCollection = ee.ImageCollection('MODIS/061/MCD12Q2').filterDate('2017-01-01', '2024-12-31')
+                       .filterBounds(roi)
+                       .select('Greenup_1')   //Greenup_1 for start of season，Dormancy_1 for end of season
+                       .map(function(image) {
+                         var time = ee.Date(image.get('system:time_start'))
+                         var daysSinceEpoch = time.difference(startDate, 'day');
+                         return image.subtract(daysSinceEpoch).clip(roi);})
+print(pheCollection)       
+function exportImage(image, roi, fileName) {  
+    Export.image.toDrive({  
+       image: image,  
+       description: fileName+'_Greenup_1',  
+       scale: 500,  //resolution
+       region: roi,  //study area
+       maxPixels: 1e13,  //Max like element, default is fine
+       crs: "EPSG:4326"  //Set Projection
+   });  
+ } 
+var indexList = pheCollection.reduceColumns(ee.Reducer.toList(), ["system:index"]).get("list"); 
+print("indexList", indexList);
+indexList.evaluate(function(indexs){ 
+for (var i=0; i<indexs.length; i++) {  
+        var image = pheCollection.filter(ee.Filter.eq("system:index", indexs[i]))
+              .first()
+        exportImage(image,roi,indexs[i]);  //Save images to Google Drive
+   }
+ });
