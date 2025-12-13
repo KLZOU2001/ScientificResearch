@@ -63,4 +63,4 @@ Export.table.toDrive({
   description: 'S2_NDVI_NDII_GrowingSeason_2017_5x5Mean',
   fileFormat: 'CSV'
 });
- 
+
