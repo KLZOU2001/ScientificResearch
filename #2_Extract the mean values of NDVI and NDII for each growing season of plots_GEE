@@ -1,65 +1,66 @@
 var pts : Table (your csv file path)
 
-//Function to cloud mask from the pixel_qa band
-function maskL8(image) {
-  var qa = image.select('QA_PIXEL');  
-  var cloudShadowBitMask = 1 << 3;
-  var cloudsBitMask = 1 << 5;
+function maskS2(image) {
+  var qa = image.select('QA60');
 
-  // Clear cloud and shadow pixels
-  var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
-      .and(qa.bitwiseAnd(cloudsBitMask).eq(0));
+  // Bits 10 and 11 are clouds and cirrus, respectively.
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
 
   return image.updateMask(mask).divide(10000);
 }
 
-//NDVI & NDII Calculation
+// NDVI & NDII Calculation for Sentinel-2
 var addIndex = function(img) {
-  // NDVI
-  var ndvi = img.normalizedDifference(['SR_B5', 'SR_B4']).rename('NDVI');
+  // NDVI: (NIR - Red) / (NIR + Red)
+  var ndvi = img.normalizedDifference(['B8', 'B4']).rename('NDVI');  // B8 is NIR, B4 is Red
 
-  // NDII (NIR - SWIR1)
-  var ndii = img.normalizedDifference(['SR_B5', 'SR_B6']).rename('NDII');
+  // NDII: (NIR - SWIR1) / (NIR + SWIR1)
+  var ndii = img.normalizedDifference(['B8', 'B11']).rename('NDII');  // B8 is NIR, B11 is SWIR1
 
   return img.addBands([ndvi, ndii]);
 };
 
-//Calculate the average NDVI/NDII value for each point during the growing season
+// Calculate the average NDVI/NDII value for each point during the growing season
 var results = pts.map(function(p) {
+  var year = 2017;  // 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024
+  var sos = ee.Number(p.get('SOS17'));  // SOS + YEAR
+  var eos = ee.Number(p.get('EOS17'));  // EOS + YEAR
 
-  var year = 2017;  //2018，2019，2020，2021，2022，2023，2024
-  var sos = ee.Number(p.get('SOS17')); //SOS+YEAR
-  var eos = ee.Number(p.get('EOS17')); //EOS+YEAR
+  var start = ee.Date.fromYMD(year, 1, 1).advance(sos, 'day');
+  var end = ee.Date.fromYMD(year, 1, 1).advance(eos, 'day');
 
-  var start = ee.Date.fromYMD(year,1,1).advance(sos, 'day');
-  var end   = ee.Date.fromYMD(year,1,1).advance(eos, 'day');
-
-  // Image Collection
-  var col = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+  // Sentinel-2 Image Collection
+  var col = ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
       .filterBounds(p.geometry())
       .filterDate(start, end)
-      .map(maskL8)
+      .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+      .map(maskS2)
       .map(addIndex)
-      // Perform a 3x3 spatial average on each image
-      .map(function(img){ return img.focal_mean(1, 'square', 'pixels'); });
+      // Perform a 5x5 spatial average on each image
+      .map(function(img) { return img.focal_mean(2, 'square', 'pixels'); }); // 3 indicates 7x7
 
-  // Average growth season
+  // Average NDVI and NDII for the growing season
   var ndvi_mean = col.select('NDVI').mean();
   var ndii_mean = col.select('NDII').mean();
 
   var dict = ndvi_mean.addBands(ndii_mean).reduceRegion({
     reducer: ee.Reducer.mean(),
     geometry: p.geometry(),
-    scale: 30,
+    scale: 10,  
     maxPixels: 1e13
   });
 
   return p.set(dict);
 });
 
- // Export results
 Export.table.toDrive({
   collection: results,
-  description: 'L8_NDVI_NDII_GrowingSeason_2017_3x3Mean',
+  description: 'S2_NDVI_NDII_GrowingSeason_2017_5x5Mean',
   fileFormat: 'CSV'
 });
+
