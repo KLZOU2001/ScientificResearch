@@ -17,8 +17,8 @@ function addIndex(img) {
   ]);
 }
 
-var scale = 10;        // Sentinel-2 分辨率
-var bufferSize = 25;   // 5×5 像元（50m窗口）
+var scale = 10;        // Sentinel-2 resolution
+var bufferSize = 25;   // 5×5 pixels (50m window)
 
 var results = pts
   .filter(ee.Filter.notNull(['SOS24', 'EOS24', 'PlotNumber']))
