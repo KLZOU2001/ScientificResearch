@@ -2,93 +2,77 @@ var pts : Table (your csv file path)
 
 function maskS2(image) {
   var qa = image.select('QA60');
-  var cloudBitMask  = 1 << 10;
+  var cloudBitMask = 1 << 10;
   var cirrusBitMask = 1 << 11;
-
   var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
-    .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
-
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
   return image.updateMask(mask).divide(10000);
 }
 
+// NDVI + NDII
 function addIndex(img) {
-  var ndvi = img.normalizedDifference(['B8', 'B4']).rename('NDVI');
-  var ndii = img.normalizedDifference(['B8', 'B11']).rename('NDII');
-  return img.addBands([ndvi, ndii]);
-}
-
-function addSpatialStats(img) {
-
-  var kernel = ee.Kernel.square({
-    radius: 2,
-    units: 'pixels',
-    normalize: false
-  });
-
-  var ndvi_mean = img.select('NDVI')
-    .focal_mean(2, 'square', 'pixels')
-    .rename('NDVI_mean');
-
-  var ndvi_sd = img.select('NDVI')
-    .reduceNeighborhood({
-      reducer: ee.Reducer.stdDev(),
-      kernel: kernel
-    })
-    .rename('NDVI_sd');
-
-  var ndii_mean = img.select('NDII')
-    .focal_mean(2, 'square', 'pixels')
-    .rename('NDII_mean');
-
-  var ndii_sd = img.select('NDII')
-    .reduceNeighborhood({
-      reducer: ee.Reducer.stdDev(),
-      kernel: kernel
-    })
-    .rename('NDII_sd');
-
   return img.addBands([
-    ndvi_mean, ndvi_sd,
-    ndii_mean, ndii_sd
+    img.normalizedDifference(['B8', 'B4']).rename('NDVI'),
+    img.normalizedDifference(['B8', 'B11']).rename('NDII')
   ]);
 }
 
-var results = pts.map(function(p) {
+var scale = 10;        // Sentinel-2 分辨率
+var bufferSize = 25;   // 5×5 像元（50m窗口）
 
-  var year = 2024;
-  var sos = ee.Number(p.get('SOS24'));
-  var eos = ee.Number(p.get('EOS24'));
+var results = pts
+  .filter(ee.Filter.notNull(['SOS24', 'EOS24', 'PlotNumber']))
+  .map(function(p) {
 
-  var start = ee.Date.fromYMD(year, 1, 1).advance(sos, 'day');
-  var end   = ee.Date.fromYMD(year, 1, 1).advance(eos, 'day');
+    var year = 2024;
+    var sos = ee.Number(p.get('SOS24'));
+    var eos = ee.Number(p.get('EOS24'));
 
-  var col = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
-    .filterBounds(p.geometry())
-    .filterDate(start, end)
-    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-    .map(maskS2)
-    .map(addIndex)
-    .map(addSpatialStats);   
+    var start = ee.Date.fromYMD(year, 1, 1).advance(sos, 'day');
+    var end   = ee.Date.fromYMD(year, 1, 1).advance(eos, 'day');
 
-  var gsImg = col.select([
-    'NDVI_mean', 'NDVI_sd',
-    'NDII_mean', 'NDII_sd'
-  ]).mean();
+    var roi = p.geometry().buffer(bufferSize).bounds();
 
-  var dict = gsImg.reduceRegion({
-    reducer: ee.Reducer.mean(),
-    geometry: p.geometry(),
-    scale: 10,
-    maxPixels: 1e13
-  });
+    var col = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+      .filterBounds(roi)
+      .filterDate(start, end)
+      .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+      .map(maskS2)
+      .map(addIndex);
 
-  return p.set(dict);
-});
+    var meanImg = col.select(['NDVI','NDII']).mean().clip(roi);
 
+    var img = meanImg.addBands(ee.Image.pixelLonLat());
+
+    var pixels = img.sample({
+      region: roi,
+      scale: scale,
+      geometries: true
+    });
+
+    pixels = pixels
+      .sort('latitude', false)
+      .sort('longitude', true);
+
+    var list = pixels.toList(25);
+
+    pixels = ee.FeatureCollection(
+      ee.List.sequence(0,24).map(function(i){
+        var f = ee.Feature(list.get(i));
+        return f.set({
+          PlotNumber: p.get('PlotNumber'),
+          pixel_id: ee.Number(i).add(1)
+        });
+      })
+    );
+
+    return pixels;
+
+}).flatten();
 
 Export.table.toDrive({
   collection: results,
-  description: 'S2_GS_NDVI_NDII_5x5_Mean_SD_2024',
+  description: 'S2_5x5_25pixels_TimeMean_2024',
   fileFormat: 'CSV'
 });
 
